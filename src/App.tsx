@@ -51,6 +51,7 @@ Your task is to analyze the uploaded PDF and extract ALL tabular data across ALL
 * Detect all tables using visual and structural cues (grid lines, spacing, alignment)
 * **CRITICAL: Also identify logical "Metadata Tables"**. Many documents contain important information in the header/footer (e.g., PO Number, Department, Section, Style, Supplier, Total Units). 
 * **Horizontal Metadata Structure**: The logical "Metadata Table" (e.g., "Header_Information") MUST be structured with each unique attribute as a COLUMN and the data as a single ROW. Do NOT use a "Field" and "Value" column structure. Each attribute name (e.g., "Department", "Supplier ID") should be a header.
+* **"NICE LABEL" Primary Table**: The main product/item detail table MUST be extracted with the table_id "NICE LABEL". It MUST follow a specific column structure to support external labeling software.
 * Distinguish tables from plain text blocks
 * Identify continuation tables across pages
 
@@ -74,6 +75,20 @@ For each table:
 * **ID Portion Extraction & Padding**: For metadata fields that combine a numerical ID and a descriptive Name (e.g., "Department: 6 - Mens Clothing"), extract ONLY the numerical ID portion. 
 * **Zero Padding**: If a numerical ID for Department, Section, or Subsection is a single digit, pad it with a leading zero (e.g., "6" becomes "06", "5" becomes "05").
 * **"DSS" Merged Column**: In the "Header_Information" table, add a new column at the end named "DSS". The value for this column MUST be a concatenation of the padded Department, Section, and Subsection values, separated by hyphens (e.g., if Dept=06, Sect=24, SubSect=05, then DSS="06-24-05").
+* **"NICE LABEL" Column Mapping**: The "NICE LABEL" table must contain the following columns in order:
+    1.  **DSS**: The DSS value from the header, repeated for every row.
+    2.  **STYLE**: Product code/Style ORIN.
+    3.  **SKU ORIN**: The SKU identifier.
+    4.  **BARCODE**: The numerical barcode.
+    5.  **SIZE**: The size variant (e.g., XS, S, M, L).
+    6.  **KIMBALL**: The Kimball number.
+    7.  **COLOR**: The base color name.
+    8.  **SUPPLIER ID**: The numerical supplier ID.
+    9.  **EUR/KWD**, **AED/PLN**, **CZK/QAR**, **BHD/RON**: Local currency prices.
+    10. **Section**: MUST be formatted as "Section: [DSS_Value]" (e.g., "Section: 06-90-05").
+    11. **Colour**: MUST be formatted as "Col: [COLOR_Value]" (e.g., "Col: CHARCOAL").
+    12. **Barcode2**: MUST be formatted as "Barcode: [BARCODE_Value]" (e.g., "Barcode: 5397362149436").
+    13. **PRICE**, **KWD**, **AED**: Final pricing columns.
 * **Exclude Summary Rows**: DO NOT include rows that represent totals or subtotals (e.g., rows containing the word "Total", "Grand Total", or "Subtotal"). The goal is to extract only the raw data lines.
 * Normalize numbers: Separate units if possible ("12 pcs" → "12", "pcs")
 * Standardize date formats if detected
@@ -107,6 +122,8 @@ Return ONLY valid JSON in the following format:
 }
 
 ### CRITICAL RULES
+* **OMIT NOTHING**: You MUST extract every single table found in the document. Do not skip any data.
+* **INVENTORY**: If you find 5 tables, you must return all 5 tables. The "NICE LABEL" table is an ADDITIONAL structural representation; you should still include the original item table if it exists.
 * DO NOT return explanation
 * DO NOT include markdown
 * DO NOT include comments
@@ -119,6 +136,7 @@ Return ONLY valid JSON in the following format:
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState<string>('');
   const [result, setResult] = useState<ExtractionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
@@ -159,6 +177,7 @@ export default function App() {
     if (!file) return;
 
     setIsExtracting(true);
+    setLoadingStatus('Preparing document...');
     setError(null);
 
     try {
@@ -172,6 +191,7 @@ export default function App() {
                            apiKey.length < 10;
 
       if (isPlaceholder) {
+        setLoadingStatus('Entering Demo Mode (No API Key found)...');
         console.warn("API Key missing. Falling back to Demo Mode.");
         await new Promise(resolve => setTimeout(resolve, 2000));
         
@@ -188,12 +208,12 @@ export default function App() {
               ]
             },
             {
-              table_id: "Example_Items_Table",
+              table_id: "NICE LABEL",
               confidence: 98,
-              columns: ["SKU", "Description", "Quantity", "Price"],
+              columns: ["DSS", "STYLE", "SKU ORIN", "BARCODE", "SIZE", "KIMBALL", "COLOR", "SUPPLIER ID", "EUR/KWD", "AED/PLN", "CZK/QAR", "BHD/RON", "Section", "Colour", "Barcode2", "PRICE", "KWD", "AED"],
               rows: [
-                ["SKU-001", "Design Consultation", "1", "$150.00"],
-                ["SKU-002", "Asset Licenses", "1", "$45.20"]
+                ["06-90-05", "991184628", "212154928", "5397362149436", "XS", "4316401", "CHARCOAL", "43001", "€ 16.00", "60.00 PLN", "365.00 Kč", "70.00 LEI", "Section: 06-90-05", "Col: CHARCOAL", "Barcode: 5397362149436", "$30", "KWD 20.500", "AED 120.00"],
+                ["06-90-05", "991184628", "212154929", "5397362149443", "S", "4316402", "CHARCOAL", "43001", "€ 16.00", "60.00 PLN", "365.00 Kč", "70.00 LEI", "Section: 06-90-05", "Col: CHARCOAL", "Barcode: 5397362149443", "$30", "KWD 20.500", "AED 120.00"]
               ]
             }
           ]
@@ -203,9 +223,11 @@ export default function App() {
         return;
       }
 
+      setLoadingStatus('Converting document to AI format...');
       const ai = new GoogleGenAI({ apiKey });
       const base64Data = await fileToBase64(file);
 
+      setLoadingStatus('AI is analyzing structure and extracting data (this may take up to 30s)...');
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: [
@@ -263,15 +285,18 @@ export default function App() {
     
     const wb = XLSX.utils.book_new();
     
-    result.tables.forEach((table) => {
+    (result?.tables || []).forEach((table) => {
+      if (!table.columns || !table.rows) return;
+
       // Create data array: headers + rows
       const data = [table.columns, ...table.rows];
       const ws = XLSX.utils.aoa_to_sheet(data);
 
       // Estimated column widths
-      const colWidths = table.columns.map((col, colIdx) => {
-        let maxLen = col.toString().length;
-        table.rows.forEach(row => {
+      const colWidths = (table.columns || []).map((col, colIdx) => {
+        let maxLen = (col || "").toString().length;
+        (table.rows || []).forEach(row => {
+          if (!row) return;
           const val = row[colIdx];
           if (val !== null && val !== undefined) {
             maxLen = Math.max(maxLen, val.toString().length);
@@ -282,7 +307,7 @@ export default function App() {
       ws['!cols'] = colWidths;
 
       // Clean sheet name (31 chars max, no forbidden chars)
-      const safeName = table.table_id
+      const safeName = (table.table_id || 'Sheet')
         .replace(/[\[\]\*\?\/\\]/g, '') // remove forbidden chars :\/?*[]
         .substring(0, 31) || `Sheet${Math.random().toString(36).substring(7)}`;
 
@@ -381,10 +406,13 @@ export default function App() {
               )}
             >
               {isExtracting ? (
-                <>
-                  <Loader2 className="animate-spin" size={18} />
-                  Processing...
-                </>
+                <div className="flex flex-col items-center gap-1">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="animate-spin" size={18} />
+                    <span>Processing...</span>
+                  </div>
+                  <span className="text-[9px] font-mono normal-case font-normal opacity-70 tracking-normal">{loadingStatus}</span>
+                </div>
               ) : (
                 <>
                   Extract Tabular Data
@@ -438,7 +466,8 @@ export default function App() {
                   <div className="w-1 h-1 bg-ink rounded-full" />
                 </div>
               </div>
-              <p className="mt-6 font-serif italic text-lg">Analyzing document structure...</p>
+              <p className="mt-6 font-serif italic text-lg">{loadingStatus || "Analyzing document structure..."}</p>
+              <p className="mt-2 text-xs font-mono opacity-50 uppercase tracking-widest">Please stay on this page</p>
               <div className="mt-4 w-48 h-1 bg-ink/10 rounded-full overflow-hidden">
                 <motion.div 
                   className="h-full bg-ink"
@@ -514,11 +543,11 @@ export default function App() {
                       exit={{ opacity: 0, x: 10 }}
                       className="flex flex-col gap-12"
                     >
-                      {result?.tables.map((table, idx) => (
-                        <div key={table.table_id} className="flex flex-col gap-4">
+                      {(result?.tables || []).map((table, idx) => (
+                        <div key={table.table_id || idx} className="flex flex-col gap-4">
                           <div className="flex justify-between items-end border-b border-line/20 pb-2">
                             <div>
-                              <h3 className="font-bold uppercase tracking-tight">{table.table_id}</h3>
+                              <h3 className="font-bold uppercase tracking-tight">{table.table_id || `Table ${idx + 1}`}</h3>
                               <p className="text-[10px] font-mono opacity-50 uppercase">Extracted Table Structure</p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -528,12 +557,12 @@ export default function App() {
                                   <div 
                                     className={cn(
                                       "h-full rounded-full",
-                                      table.confidence > 80 ? "bg-green-500" : table.confidence > 50 ? "bg-yellow-500" : "bg-red-500"
+                                      (table.confidence || 0) > 80 ? "bg-green-500" : (table.confidence || 0) > 50 ? "bg-yellow-500" : "bg-red-500"
                                     )}
-                                    style={{ width: `${table.confidence}%` }}
+                                    style={{ width: `${table.confidence || 0}%` }}
                                   />
                                 </div>
-                                <span className="text-xs font-mono font-bold">{table.confidence}%</span>
+                                <span className="text-xs font-mono font-bold">{table.confidence || 0}%</span>
                               </div>
                             </div>
                           </div>
@@ -542,7 +571,7 @@ export default function App() {
                             <table className="w-full text-left border-collapse">
                               <thead>
                                 <tr className="bg-ink/[0.02]">
-                                  {table.columns.map((col, i) => (
+                                  {(table.columns || []).map((col, i) => (
                                     <th key={i} className="p-3 text-[11px] font-serif italic border-b border-line/10 opacity-60 uppercase tracking-wider">
                                       {col}
                                     </th>
@@ -550,9 +579,9 @@ export default function App() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {table.rows.map((row, i) => (
+                                {(table.rows || []).map((row, i) => (
                                   <tr key={i} className="hover:bg-ink/[0.02] transition-colors border-b border-line/[0.05] last:border-0">
-                                    {row.map((cell, j) => (
+                                    {(row || []).map((cell, j) => (
                                       <td key={j} className="p-3 text-xs font-mono border-r border-line/[0.05] last:border-r-0">
                                         {cell === null ? <span className="opacity-20 italic">null</span> : cell}
                                       </td>
