@@ -262,10 +262,29 @@ export default function App() {
     const wb = XLSX.utils.book_new();
     
     result.tables.forEach((table) => {
-      // Create header row and data rows
+      // Create data array: headers + rows
       const data = [table.columns, ...table.rows];
       const ws = XLSX.utils.aoa_to_sheet(data);
-      XLSX.utils.book_append_sheet(wb, ws, table.table_id.substring(0, 31)); // Sheet name limit 31 chars
+
+      // Estimated column widths
+      const colWidths = table.columns.map((col, colIdx) => {
+        let maxLen = col.toString().length;
+        table.rows.forEach(row => {
+          const val = row[colIdx];
+          if (val !== null && val !== undefined) {
+            maxLen = Math.max(maxLen, val.toString().length);
+          }
+        });
+        return { wch: maxLen + 2 };
+      });
+      ws['!cols'] = colWidths;
+
+      // Clean sheet name (31 chars max, no forbidden chars)
+      const safeName = table.table_id
+        .replace(/[\[\]\*\?\/\\]/g, '') // remove forbidden chars :\/?*[]
+        .substring(0, 31) || `Sheet${Math.random().toString(36).substring(7)}`;
+
+      XLSX.utils.book_append_sheet(wb, ws, safeName);
     });
     
     XLSX.writeFile(wb, `${result.document_name.replace('.pdf', '')}_extracted.xlsx`);
