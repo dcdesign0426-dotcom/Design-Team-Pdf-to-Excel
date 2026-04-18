@@ -71,7 +71,9 @@ For each table:
 
 ### STEP 4: DATA CLEANING & VALUE ISOLATION
 * Trim extra spaces, line breaks, and special characters
-* **ID Portion Extraction**: For metadata fields that combine a numerical ID and a descriptive Name (e.g., "Department: 6 - Mens Clothing" or "Supplier ID: 84081 - FASHION UK"), extract ONLY the numerical ID portion (e.g., "6" or "84081"). Do not include the descriptive text or separators.
+* **ID Portion Extraction & Padding**: For metadata fields that combine a numerical ID and a descriptive Name (e.g., "Department: 6 - Mens Clothing"), extract ONLY the numerical ID portion. 
+* **Zero Padding**: If a numerical ID for Department, Section, or Subsection is a single digit, pad it with a leading zero (e.g., "6" becomes "06", "5" becomes "05").
+* **"DSS" Merged Column**: In the "Header_Information" table, add a new column at the end named "DSS". The value for this column MUST be a concatenation of the padded Department, Section, and Subsection values, separated by hyphens (e.g., if Dept=06, Sect=24, SubSect=05, then DSS="06-24-05").
 * **Exclude Summary Rows**: DO NOT include rows that represent totals or subtotals (e.g., rows containing the word "Total", "Grand Total", or "Subtotal"). The goal is to extract only the raw data lines.
 * Normalize numbers: Separate units if possible ("12 pcs" → "12", "pcs")
 * Standardize date formats if detected
@@ -180,9 +182,9 @@ export default function App() {
             {
               table_id: "Header_Information",
               confidence: 99,
-              columns: ["PO Number", "Department", "Section", "Subsection", "Supplier ID", "Total Units"],
+              columns: ["PO Number", "Department", "Section", "Subsection", "Supplier ID", "Total Units", "DSS"],
               rows: [
-                ["1251347", "6", "12", "97", "84081", "35,690"]
+                ["1251347", "06", "24", "05", "84081", "35,690", "06-24-05"]
               ]
             },
             {
