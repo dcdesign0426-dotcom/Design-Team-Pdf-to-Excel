@@ -46,15 +46,17 @@ const SYSTEM_INSTRUCTION = `You are an advanced AI-powered document intelligence
 
 Your task is to analyze the uploaded PDF and extract ALL tabular data across ALL pages with maximum structural accuracy.
 
-### STEP 1: DOCUMENT UNDERSTANDING
+### STEP 1: DOCUMENT UNDERSTANDING & METADATA
 * Analyze the full document page by page
 * Detect all tables using visual and structural cues (grid lines, spacing, alignment)
+* **CRITICAL: Also identify logical "Metadata Tables"**. Many documents contain important information in the header/footer (e.g., PO Number, Department, Section, Style, Supplier, Total Units). 
+* Extract these key-value pairs into a separate logical table (e.g., table_id: "Header_Information").
 * Distinguish tables from plain text blocks
 * Identify continuation tables across pages
 
 ### STEP 2: TABLE DETECTION & SEGMENTATION
 For each detected table:
-* Assign a descriptive ID based on the table's title or caption in the document (e.g., "Invoice Details", "Employee List"). If no title is found, use Table_1, Table_2, etc.
+* Assign a descriptive ID based on the table's title or caption in the document (e.g., "Invoice Details", "Employee List", "Purchase Order Metadata"). If no title is found, use Table_1, Table_2, etc.
 * Detect table boundaries precisely
 * Merge multi-page tables into a single logical table
 * Remove repeated headers across pages
