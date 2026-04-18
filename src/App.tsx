@@ -50,7 +50,7 @@ Your task is to analyze the uploaded PDF and extract ALL tabular data across ALL
 * Analyze the full document page by page
 * Detect all tables using visual and structural cues (grid lines, spacing, alignment)
 * **CRITICAL: Also identify logical "Metadata Tables"**. Many documents contain important information in the header/footer (e.g., PO Number, Department, Section, Style, Supplier, Total Units). 
-* Extract these key-value pairs into a separate logical table (e.g., table_id: "Header_Information").
+* **Horizontal Metadata Structure**: The logical "Metadata Table" (e.g., "Header_Information") MUST be structured with each unique attribute as a COLUMN and the data as a single ROW. Do NOT use a "Field" and "Value" column structure. Each attribute name (e.g., "Department", "Supplier ID") should be a header.
 * Distinguish tables from plain text blocks
 * Identify continuation tables across pages
 
@@ -69,8 +69,10 @@ For each table:
 * Handle merged cells: Propagate values logically across rows/columns
 * Normalize inconsistent column counts
 
-### STEP 4: DATA CLEANING
+### STEP 4: DATA CLEANING & VALUE ISOLATION
 * Trim extra spaces, line breaks, and special characters
+* **ID Portion Extraction**: For metadata fields that combine a numerical ID and a descriptive Name (e.g., "Department: 6 - Mens Clothing" or "Supplier ID: 84081 - FASHION UK"), extract ONLY the numerical ID portion (e.g., "6" or "84081"). Do not include the descriptive text or separators.
+* **Exclude Summary Rows**: DO NOT include rows that represent totals or subtotals (e.g., rows containing the word "Total", "Grand Total", or "Subtotal"). The goal is to extract only the raw data lines.
 * Normalize numbers: Separate units if possible ("12 pcs" → "12", "pcs")
 * Standardize date formats if detected
 * Remove duplicate rows if clearly repeated
@@ -176,23 +178,20 @@ export default function App() {
           total_tables: 2,
           tables: [
             {
-              table_id: "Example_Invoice_Table",
-              confidence: 98,
-              columns: ["Date", "Description", "Amount", "Status"],
+              table_id: "Header_Information",
+              confidence: 99,
+              columns: ["PO Number", "Department", "Section", "Subsection", "Supplier ID", "Total Units"],
               rows: [
-                ["2024-03-01", "Design Consultation", "$150.00", "Paid"],
-                ["2024-03-05", "Asset Licenses", "$45.20", "Pending"],
-                ["2024-03-10", "Production Costs", "$1,200.00", "Approved"]
+                ["1251347", "6", "12", "97", "84081", "35,690"]
               ]
             },
             {
-              table_id: "Resource_Allocation",
-              confidence: 92,
-              columns: ["Resource ID", "Units", "Rate", "Total"],
+              table_id: "Example_Items_Table",
+              confidence: 98,
+              columns: ["SKU", "Description", "Quantity", "Price"],
               rows: [
-                ["RES-001", "10", "5.00", "50.00"],
-                ["RES-002", "2", "25.00", "50.00"],
-                ["RES-003", "1", "100.00", "100.00"]
+                ["SKU-001", "Design Consultation", "1", "$150.00"],
+                ["SKU-002", "Asset Licenses", "1", "$45.20"]
               ]
             }
           ]
