@@ -51,7 +51,7 @@ Your task is to analyze the uploaded PDF and extract ALL tabular data across ALL
 * Detect all tables using visual and structural cues (grid lines, spacing, alignment)
 * **CRITICAL: Also identify logical "Metadata Tables"**. Many documents contain important information in the header/footer (e.g., PO Number, Department, Section, Style, Supplier, Total Units). 
 * **Horizontal Metadata Structure**: The logical "Metadata Table" (e.g., "Header_Information") MUST be structured with each unique attribute as a COLUMN and the data as a single ROW. Do NOT use a "Field" and "Value" column structure. Each attribute name (e.g., "Department", "Supplier ID") should be a header.
-* **"NICE LABEL" Primary Table**: The main product/item detail table MUST be extracted with the table_id "NICE LABEL". It MUST follow a specific column structure to support external labeling software.
+* **"NICE LABEL" Combine Master Table**: You MUST generate a table with table_id "NICE LABEL" that acts as a **Consolidated Master Table**. This table should merge data from ALL product-related tables found across ALL pages of the PDF. Every unique item (SKU/Barcode) found in the document must have a corresponding row in this master table.
 * Distinguish tables from plain text blocks
 * Identify continuation tables across pages
 
@@ -75,6 +75,7 @@ For each table:
 * **ID Portion Extraction & Padding**: For metadata fields that combine a numerical ID and a descriptive Name (e.g., "Department: 6 - Mens Clothing"), extract ONLY the numerical ID portion. 
 * **Zero Padding**: If a numerical ID for Department, Section, or Subsection is a single digit, pad it with a leading zero (e.g., "6" becomes "06", "5" becomes "05").
 * **"DSS" Merged Column**: In the "Header_Information" table, add a new column at the end named "DSS". The value for this column MUST be a concatenation of the padded Department, Section, and Subsection values, separated by hyphens (e.g., if Dept=06, Sect=24, SubSect=05, then DSS="06-24-05").
+* **"NICE LABEL" Master Consolidation**: The "NICE LABEL" table is a **Combine Master Table**. If the PDF has multiple tables on different pages, you MUST aggregate all unique values (SKU, Barcode, Style, etc.) into this one master list. Every unique product configuration found anywhere in the PDF must be represented as a row here.
 * **"NICE LABEL" Column Mapping**: The "NICE LABEL" table must contain the following columns in order:
     1.  **DSS**: The DSS value from the header, repeated for every row.
     2.  **STYLE**: Product code/Style ORIN.
@@ -123,7 +124,8 @@ Return ONLY valid JSON in the following format:
 
 ### CRITICAL RULES
 * **OMIT NOTHING**: You MUST extract every single table found in the document. Do not skip any data.
-* **INVENTORY**: If you find 5 tables, you must return all 5 tables. The "NICE LABEL" table is an ADDITIONAL structural representation; you should still include the original item table if it exists.
+* **MASTER TABLE (NICE LABEL)**: The "NICE LABEL" table MUST be a **Combine Master Table**. It acts as a single, consolidated repository for all unique product data extracted from every other table in the document.
+* **INVENTORY**: If you find 5 separate tables, you must return all 5 original tables PLUS the consolidated "NICE LABEL" master table.
 * DO NOT return explanation
 * DO NOT include markdown
 * DO NOT include comments
