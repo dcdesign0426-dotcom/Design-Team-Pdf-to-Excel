@@ -69,6 +69,7 @@ For each table:
 * Ensure all rows align with correct columns
 * Handle merged cells: Propagate values logically across rows/columns
 * Normalize inconsistent column counts
+* **Side-by-Side Merging**: If a table has repeated sets of columns placed side-by-side (e.g., Column A, B, C followed by Column A_1, B_1, C_1), you MUST unpivot/merge them into a single vertical list. All data should follow the first set of column headers to ensure a clean vertical structure.
 
 ### STEP 4: DATA CLEANING & VALUE ISOLATION
 * Trim extra spaces, line breaks, and special characters
@@ -229,36 +230,81 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey });
       const base64Data = await fileToBase64(file);
 
-      setLoadingStatus('AI is analyzing structure and extracting data (this may take up to 30s)...');
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              { text: `Extract tables from this PDF: ${file.name}` },
-              {
-                inlineData: {
-                  mimeType: "application/pdf",
-                  data: base64Data
-                }
-              }
-            ]
+      const fetchWithRetry = async (attempt: number = 0): Promise<any> => {
+        try {
+          // Use gemini-3.1-pro-preview for complex PDF extraction as it's more reliable
+          const currentModel = attempt > 0 ? "gemini-3-flash-preview" : "gemini-3.1-pro-preview";
+          
+          if (attempt > 0) {
+            setLoadingStatus(`System busy. Retrying with alternate model (Attempt ${attempt}/3)...`);
+          } else {
+            setLoadingStatus('AI is analyzing structure and extracting data (this may take up to 30s)...');
           }
-        ],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: "application/json"
+
+          return await ai.models.generateContent({
+            model: currentModel,
+            contents: [
+              {
+                parts: [
+                  { text: `Return ONLY a structured JSON object representing all tables. Specifically, create a master 'NICE LABEL' table consolidating all unique product items found across all tables in the PDF: ${file.name}. Ensure the output is valid JSON.` },
+                  {
+                    inlineData: {
+                      mimeType: "application/pdf",
+                      data: base64Data
+                    }
+                  }
+                ]
+              }
+            ],
+            config: {
+              systemInstruction: SYSTEM_INSTRUCTION,
+              responseMimeType: "application/json"
+            }
+          });
+        } catch (error: any) {
+          const errorMessage = error?.message || "";
+          const isRetryable = errorMessage.includes('429') || 
+                            errorMessage.includes('RESOURCE_EXHAUSTED') || 
+                            errorMessage.includes('500') ||
+                            errorMessage.includes('deadline');
+                            
+          if (isRetryable && attempt < 3) {
+            const delay = Math.pow(2, attempt) * 3000; // 3s, 6s, 12s backoff
+            await new Promise(r => setTimeout(r, delay));
+            return fetchWithRetry(attempt + 1);
+          }
+          throw error;
         }
-      });
+      };
 
-      const text = response.text;
-      if (!text) throw new Error("No response from AI");
+      const response = await fetchWithRetry();
 
-      const parsedResult = JSON.parse(text) as ExtractionResult;
-      setResult(parsedResult);
-    } catch (err) {
+      let text = response.text;
+      if (!text) throw new Error("No response from AI. The document might be too complex or safety filters were triggered.");
+
+      // Clean the response if it's wrapped in markdown code blocks
+      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+      try {
+        const parsedResult = JSON.parse(text) as ExtractionResult;
+        if (!parsedResult.tables || !Array.isArray(parsedResult.tables)) {
+          throw new Error("Invalid response format from AI.");
+        }
+        setResult(parsedResult);
+        setActiveTab('preview');
+      } catch (parseError) {
+        console.error("JSON Parse Error:", text);
+        throw new Error("Failed to parse AI response. Please try again with a clearer document.");
+      }
+    } catch (err: any) {
       console.error("Extraction error:", err);
-      setError(err instanceof Error ? err.message : "An unexpected error occurred during extraction.");
+      let errorMessage = err instanceof Error ? err.message : "An unexpected error occurred during extraction.";
+      
+      if (errorMessage.includes('429') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        errorMessage = "🛑 Gemini AI is currently overloaded with too many requests. We tried retrying 3 times, but it's still busy. Please wait 1-2 minutes and try again.";
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsExtracting(false);
     }
@@ -509,6 +555,16 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <button 
+                    onClick={() => {
+                      setResult(null);
+                      setFile(null);
+                      setError(null);
+                    }}
+                    className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-red-500 hover:bg-red-50 rounded-sm transition-all"
+                  >
+                    Reset
+                  </button>
+                  <button 
                     onClick={handleCopy}
                     className="p-2 hover:bg-slate-100 rounded-md transition-all relative group text-slate-600"
                     title="Copy JSON"
@@ -545,56 +601,62 @@ export default function App() {
                       exit={{ opacity: 0, x: 10 }}
                       className="flex flex-col gap-12"
                     >
-                      {(result?.tables || []).map((table, idx) => (
-                        <div key={table.table_id || idx} className="flex flex-col gap-4">
-                          <div className="flex justify-between items-end border-b border-line/20 pb-2">
-                            <div>
-                              <h3 className="font-bold uppercase tracking-tight">{table.table_id || `Table ${idx + 1}`}</h3>
-                              <p className="text-[10px] font-mono opacity-50 uppercase">Extracted Table Structure</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-mono opacity-50 uppercase">Confidence</span>
-                              <div className="flex items-center gap-1.5">
-                                <div className="w-16 h-1.5 bg-ink/10 rounded-full overflow-hidden">
-                                  <div 
-                                    className={cn(
-                                      "h-full rounded-full",
-                                      (table.confidence || 0) > 80 ? "bg-green-500" : (table.confidence || 0) > 50 ? "bg-yellow-500" : "bg-red-500"
-                                    )}
-                                    style={{ width: `${table.confidence || 0}%` }}
-                                  />
+                      {(!result?.tables || result.tables.length === 0) ? (
+                        <div className="py-20 text-center opacity-30">
+                          <p className="font-serif italic text-lg">No tables found in this document.</p>
+                        </div>
+                      ) : (
+                        result.tables.map((table, idx) => (
+                          <div key={table.table_id || idx} className="flex flex-col gap-4">
+                            <div className="flex justify-between items-end border-b border-line/20 pb-2">
+                              <div>
+                                <h3 className="font-bold uppercase tracking-tight">{table.table_id || `Table ${idx + 1}`}</h3>
+                                <p className="text-[10px] font-mono opacity-50 uppercase">Extracted Table Structure</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono opacity-50 uppercase">Confidence</span>
+                                <div className="flex items-center gap-1.5">
+                                  <div className="w-16 h-1.5 bg-ink/10 rounded-full overflow-hidden">
+                                    <div 
+                                      className={cn(
+                                        "h-full rounded-full",
+                                        (table.confidence || 0) > 80 ? "bg-green-500" : (table.confidence || 0) > 50 ? "bg-yellow-500" : "bg-red-500"
+                                      )}
+                                      style={{ width: `${table.confidence || 0}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-mono font-bold">{table.confidence || 0}%</span>
                                 </div>
-                                <span className="text-xs font-mono font-bold">{table.confidence || 0}%</span>
                               </div>
                             </div>
-                          </div>
-                          
-                          <div className="overflow-x-auto border border-line/10 rounded-sm shadow-sm">
-                            <table className="w-full text-left border-collapse">
-                              <thead>
-                                <tr className="bg-ink/[0.02]">
-                                  {(table.columns || []).map((col, i) => (
-                                    <th key={i} className="p-3 text-[11px] font-serif italic border-b border-line/10 opacity-60 uppercase tracking-wider">
-                                      {col}
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(table.rows || []).map((row, i) => (
-                                  <tr key={i} className="hover:bg-ink/[0.02] transition-colors border-b border-line/[0.05] last:border-0">
-                                    {(row || []).map((cell, j) => (
-                                      <td key={j} className="p-3 text-xs font-mono border-r border-line/[0.05] last:border-r-0">
-                                        {cell === null ? <span className="opacity-20 italic">null</span> : cell}
-                                      </td>
+                            
+                            <div className="overflow-x-auto border border-line/10 rounded-sm shadow-sm">
+                              <table className="w-full text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-ink/[0.02]">
+                                    {(table.columns || []).map((col, i) => (
+                                      <th key={i} className="p-3 text-[11px] font-serif italic border-b border-line/10 opacity-60 uppercase tracking-wider">
+                                        {col}
+                                      </th>
                                     ))}
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                </thead>
+                                <tbody>
+                                  {(table.rows || []).map((row, i) => (
+                                    <tr key={i} className="hover:bg-ink/[0.02] transition-colors border-b border-line/[0.05] last:border-0">
+                                      {(row || []).map((cell, j) => (
+                                        <td key={j} className="p-3 text-xs font-mono border-r border-line/[0.05] last:border-r-0">
+                                          {cell === null ? <span className="opacity-20 italic">null</span> : cell}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </motion.div>
                   ) : (
                     <motion.div 
